@@ -8,6 +8,13 @@ namespace AGraph
 {
     class UndirectedGenericGraph<T>
     {
+        private readonly Action<IEnumerable<Vertex<T>>> _visitVertices = vertices =>
+        {
+            foreach (var vertex in vertices)
+            {
+                vertex.IsVisited = true;
+            }
+        };
         public UndirectedGenericGraph(params Vertex<T>[] initialNodes)
             : this((IEnumerable<Vertex<T>>)initialNodes) { }
         public UndirectedGenericGraph(IEnumerable<Vertex<T>> initialNodes = null)
@@ -18,16 +25,11 @@ namespace AGraph
         public int Size => Vertices.Count;
 
         #region Public Methods
-        public void AddPair(Vertex<T> first, Vertex<T> second)
+        public bool AddPair(Vertex<T> first, Vertex<T> second)
         {
             AddToList(first);
             AddToList(second);
-            AddNeighbors(first, second);
-        }
-        public void DepthFirstSearch(Vertex<T> root)
-        {
-            UnvisitAll();
-            DepthFirstSearchImplementation(root);
+            return AddNeighbors(first, second);
         }
         public bool IsEulerianGraph()
         {
@@ -37,7 +39,8 @@ namespace AGraph
         }
         public bool IsConnectedGraph()
         {
-            DepthFirstSearch(Vertices.First());
+            UnvisitAll();
+            DepthFirstSearchImplementation(Vertices.First());
             return HaveAllVerticesVisited();
         }
         public void OptimalColoring(Grid graphGrid)
@@ -76,8 +79,50 @@ namespace AGraph
                         new SolidColorBrush((Color)color);
             }
         }
+        public bool IsGraph2Colorable()
+        {
+            UnvisitAll();
+            return HasGraphOddCircle();
+            //return Can2ColoringGraph();
+        }
+
+        public int[] GetVerticesCountOfEachLevel(Vertex<T> vertexRoot)
+        {
+            var CountVerticesOfEachLevel = new List<int>();
+            var CalculateCountVerticesOfEachLevel = new Func<IEnumerable<Vertex<T>>, bool>(vertices =>
+            {
+                _visitVertices(vertices);
+                CountVerticesOfEachLevel.Add(vertices.Count());
+                return true;
+            });
+            UnvisitAll();
+            BreathFirstSearchImplementation(CalculateCountVerticesOfEachLevel,vertexRoot);
+            return CountVerticesOfEachLevel.ToArray();
+        }
+
         #endregion
         #region Private Methods
+        private bool Can2ColoringGraph()
+        {
+            while (true)
+            {
+                if (Vertices.All(v => v.Color != null)) break;
+                var rootVertex = Vertices.FirstOrDefault(v => v.Color == null);
+                if (rootVertex == null) break;
+                rootVertex.Color = Colors.Red;
+                foreach (var neighborVertex in rootVertex.Neighbors.Where(n => n.Color == null))
+                {
+                    neighborVertex.Color = Colors.Blue;
+                }
+            }
+            foreach (var vertex in Vertices)
+            {
+                if (vertex.Neighbors.Any(n => n.Color == vertex.Color))
+                    return false;
+            }
+            return true;
+
+        }
         private void GreedyColoringImplementation(Queue<Vertex<T>> queueVertices)
         {
             //Sequential coloring of selected vertices. 
@@ -140,17 +185,51 @@ namespace AGraph
         //        ColoringButtons(vertex, graphGrid);
         //    }
         //}
-        private void DepthFirstSearchImplementation(Vertex<T> root)
+        private void DepthFirstSearchImplementation(Vertex<T> rootVertex)
         {
-            if (!root.IsVisited)
+            if (!rootVertex.IsVisited)
             {
-                root.IsVisited = true;
+                rootVertex.IsVisited = true;
 
-                foreach (Vertex<T> neighbor in root.Neighbors)
+                foreach (var neighbor in rootVertex.Neighbors)
                 {
                     DepthFirstSearchImplementation(neighbor);
                 }
             }
+        }
+        private bool HasGraphOddCircle()
+        {
+            var isContainOddCircleFun = new Func<IEnumerable<Vertex<T>>, bool>(vertices =>
+            {
+                _visitVertices(vertices);
+                return vertices.SelectMany(vertex => vertex.Neighbors).All(vertexNeighbor => !vertices.Contains(vertexNeighbor));
+            });
+            return BreathFirstSearchImplementation(isContainOddCircleFun);
+        }
+        private bool BreathFirstSearchImplementation(Func<IEnumerable<Vertex<T>>, bool> doInBfs, Vertex<T> vertexRoot = null)
+        {
+            var res = true;
+            var queueVertex = new Queue<Vertex<T>>();
+            if (Vertices.Count == 0)
+                return false;
+            queueVertex.Enqueue(vertexRoot ?? Vertices.FirstOrDefault());
+            while (queueVertex.Count > 0)
+            {
+                var currentVertices = new Vertex<T>[queueVertex.Count];
+                queueVertex.CopyTo(currentVertices, 0);
+                queueVertex.Clear();
+                foreach (var vertex in currentVertices)
+                {
+                    foreach (var neighbor in vertex.Neighbors.Where(n => n.IsVisited == false))
+                    {
+                        queueVertex.Enqueue(neighbor);
+                    }
+                }
+                if (doInBfs(currentVertices)) continue;
+                res = false;
+                break;
+            }
+            return res;
         }
         private void AddToList(Vertex<T> vertex)
         {
@@ -159,17 +238,15 @@ namespace AGraph
                 Vertices.Add(vertex);
             }
         }
-        private void AddNeighbors(Vertex<T> first, Vertex<T> second)
+        private bool AddNeighbors(Vertex<T> first, Vertex<T> second)
         {
-            AddNeighbor(first, second);
-            AddNeighbor(second, first);
+            return AddNeighbor(first, second) && AddNeighbor(second, first);
         }
-        private void AddNeighbor(Vertex<T> first, Vertex<T> second)
+        private bool AddNeighbor(Vertex<T> first, Vertex<T> second)
         {
-            if (!first.Neighbors.Contains(second))
-            {
-                first.AddEdge(second);
-            }
+            if (first.Neighbors.Contains(second)) return false;
+            first.AddEdge(second);
+            return true;
         }
         private void UnvisitAll()
         {
@@ -198,10 +275,5 @@ namespace AGraph
             return true;
         }
         #endregion
-
-        private void tst()
-        {
-
-        }
     }
 }

@@ -1,6 +1,7 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -13,6 +14,7 @@ using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
@@ -21,7 +23,6 @@ using System.Windows.Threading;
 
 namespace AGraph
 {
-
     /// <summary>
     /// Interaction logic for MainWindow.xaml
     /// </summary>
@@ -33,14 +34,71 @@ namespace AGraph
         public Vector PrevVertex { get; set; }
         public Button PrevButton { get; set; }
         private UndirectedGenericGraph<string> _graph;
-        private readonly DispatcherTimer _uiElementUpdate = new DispatcherTimer();
+        //private readonly DispatcherTimer _uiElementUpdate = new DispatcherTimer();
         public bool IsOnGreedyColoringState { get; set; }
         private Queue<Vertex<string>> _queuebButtons;
+        private List<Button> _glowingButtons = new List<Button>();
+        public int BfsLevelIndex { get; set; }
+        public int[] BfsLevelArray { get; set; }
+        readonly Collection<string> _linesRegisteredName = new Collection<string>();
+        private List<string> DfsQueue = new List<string>();
+        public int DfsLevelIndex { get; set; }
+
+        private int[,] _adjacencyMatrix;
         public MainWindow()
         {
             InitializeComponent();
             MaxHeight = SystemParameters.MaximizedPrimaryScreenHeight;
+            SetButtonColorAnimation();
+            VisibilityAnimation.SetIsActive(GridGreedyColoringInfo, true);
+            VisibilityAnimation.SetIsActive(GridGraphOptions, true);
+            //UiDis.Tick += GlowingVertices;
+        }
+        private void BuildAdjacencyMatrix()
+        {
+            if (_graph.Vertices.Count <= 1)
+                return;
+            _adjacencyMatrix = new int[_graph.Vertices.Count - 1, _graph.Vertices.Count - 1];
+            for (var i = 65; i <= 63 + _graph.Vertices.Count; i++)
+            {
+                for (var j = 66; j <= 64 + _graph.Vertices.Count; j++)
+                {
+                    if (i == j)
+                        _adjacencyMatrix[i - 65, j - 66]=0;
+                    else if (_graph.Vertices.Single(v => v.Name == ((char)i).ToString()).Neighbors
+                        .SingleOrDefault(n => n.Name == ((char)j).ToString()) != null)
+                        _adjacencyMatrix[i - 65, j - 66] = 1;
+                    else
+                        _adjacencyMatrix[i - 65, j - 66] = 100;
+                }
+            }
+        }
 
+        private void ExecuteFloyedWarshall()
+        {
+            for (int k = 0; k < _graph.Vertices.Count - 1; k++)
+            {
+                for (int i = 0; i < _graph.Vertices.Count - 1; i++)
+                {
+                    for (int j = 0; j < _graph.Vertices.Count - 1; j++)
+                    {
+                        if (_adjacencyMatrix[i, j] > _adjacencyMatrix[i, k] + _adjacencyMatrix[k, j])
+                            _adjacencyMatrix[i, j] = _adjacencyMatrix[i, k] + _adjacencyMatrix[k, j];
+                    }
+                }
+            }
+        }
+        private void SetButtonColorAnimation()
+        {
+            var animation = new ColorAnimation
+            {
+                To = Colors.DarkOrchid,
+                RepeatBehavior = RepeatBehavior.Forever,
+                AutoReverse = true,
+                Duration = new Duration(TimeSpan.FromSeconds(0.8))
+            };
+            BtnStartGreedyAlgorithm.Background = new SolidColorBrush(Colors.CornflowerBlue);
+            BtnStartGreedyAlgorithm.Background.BeginAnimation(SolidColorBrush.ColorProperty, animation);
         }
         private void WindowsMain_Loaded(object sender, RoutedEventArgs e)
         {
@@ -55,7 +113,19 @@ namespace AGraph
         {
             if (TxtVerticesNumber.Text.Length < 1)
                 return;
-            GraidGraph.Children.Clear();
+            foreach (var child in GridGraph.Children)
+            {
+                if (child is Label label)
+                    label.Content = string.Empty;
+                if (child is Button button)
+                    button.BeginAnimation(BackgroundProperty, null);
+                else if (child is Line line)
+                {
+                    var gradientStopAnimationStoryboard = new Storyboard();
+                    gradientStopAnimationStoryboard.Begin(line);
+                }
+            }
+            GridGraph.Children.Clear();
             IsVertexSelected = false;
             _queuebButtons = new Queue<Vertex<string>>();
             var vertices = new List<Vertex<string>>();
@@ -67,10 +137,10 @@ namespace AGraph
                 var labelYposition = Math.Sin(Math.PI * (360 / VertecsCount * i) / 180.0) * (Radius);
                 var labelXposition = Math.Cos(Math.PI * (360 / VertecsCount * i) / 180.0) * (Radius);
                 var charId = ((char)(64 + i)).ToString();
-                GraidGraph.Children
+                GridGraph.Children
                     .Add(NewVertex(charId,
                     new Thickness(0, 0, buttonXposition, bottonYposition)));
-                GraidGraph.Children
+                GridGraph.Children
                     .Add(new Label
                     {
                         Name = charId,
@@ -83,17 +153,18 @@ namespace AGraph
                     Add(new Vertex<string>(charId));
             }
             _graph = new UndirectedGenericGraph<string>(vertices);
-            BtnIsGraphConnected.IsEnabled = true;
-            BtnIsGraphEulerian.IsEnabled = true;
-            BtnStartGreedyColoring.IsEnabled = true;
-            BtnStartOptimalColoring.IsEnabled = true;
+            if (GridGraphOptions.Visibility != Visibility.Visible)
+                GridGraphOptions.Visibility = Visibility.Visible;
         }
         public Button NewVertex(string name, Thickness margin)
         {
             var vertexRighClickMenu = new ContextMenu();
-            var menuItemGreedyColoring = new MenuItem { Header = "StartUiUpdate greedy coloring" };
-            //menuItemGreedyColoring.Click += MenuItemGreedyColoring_Click;
-            vertexRighClickMenu.Items.Add(menuItemGreedyColoring);
+            var menuItemSimulateBFS = new MenuItem { Header = "Simulate BFS" };
+            menuItemSimulateBFS.Click += MenuItemSimulateBFS_Click;
+            var menuItemSimulateDFS = new MenuItem { Header = "Simulate DFS" };
+            menuItemSimulateDFS.Click += MenuItemSimulateDFS_Click;
+            vertexRighClickMenu.Items.Add(menuItemSimulateBFS);
+            vertexRighClickMenu.Items.Add(menuItemSimulateDFS);
             var vertex = new Button
             {
                 Name = name,
@@ -104,43 +175,256 @@ namespace AGraph
                 Content = name,
                 Foreground = Brushes.White,
                 FontSize = 22,
+                BorderBrush = Brushes.Black,
+                BorderThickness = new Thickness(2),
                 ContextMenu = vertexRighClickMenu
             };
-            Extensions.SetVertexState(vertex, (int)VertexState.Normal);
+            Extensions.VertexState(vertex, (int)VertexState.Normal);
             vertex.Click += Vertex_Click;
             return vertex;
+        }
+        private void MenuItemSimulateDFS_Click(object sender, RoutedEventArgs e)
+        {
+            var btnStartVertex = ((sender as MenuItem).Parent as ContextMenu)
+                .PlacementTarget as Button;
+            var vertexStart = _graph.Vertices.Single(v => v.Name == btnStartVertex.Name);
+            DfsLevelIndex = 0;
+            SaveDfsToList(vertexStart, vertexStart);
+            DfsColorTheButton();
+        }
+        private void DfsColorTheButton()
+        {
+            if (DfsLevelIndex == 0)
+                DfsLevelIndex++;
+            var btnRoot = GridGraph.Children.OfType<Button>()
+                .Single(b => b.Name == DfsQueue[DfsLevelIndex][0].ToString());
+            if (!Extensions.IsPassed(btnRoot))
+            {
+                Extensions.IsPassed(btnRoot, true);
+                var colorAnimationButton = new ColorAnimation
+                {
+                    From = Colors.Black,
+                    To = Colors.Red,
+                    Duration = TimeSpan.FromSeconds(1)
+                };
+                colorAnimationButton.Completed += (sender, e) => DfsColorAnimationButton_Completed(sender, e, DfsQueue[DfsLevelIndex]);
+                btnRoot.Background = new SolidColorBrush(Colors.Black);
+                btnRoot.Background
+                    .BeginAnimation(SolidColorBrush.ColorProperty, colorAnimationButton);
+                GridGraph.Children.OfType<Label>()
+                    .Single(l => l.Name == DfsQueue[DfsLevelIndex][0].ToString())
+                    .Content = DfsLevelIndex;
+            }
+            else
+            {
+                DfsColorTheLine(DfsQueue[DfsLevelIndex]);
+            }
+        }
+        private void DfsColorTheLine(string lineName)
+        {
+            var line = GridGraph.Children.OfType<Line>()
+    .Single(l => l.Name.Contains(lineName[0].ToString()) &&
+                 l.Name.Contains(lineName[1].ToString()));
+            //if (Extensions.IsPassed(line))
+            //{
+            //    if (DfsLevelIndex >= DfsQueue.Count)
+            //        return;
+            //    DfsLevelIndex++;
+            //    DfsColorTheButton();
+            //    return;
+            //}
+            var btnStart = GridGraph.Children.OfType<Button>().Single(b => b.Name == lineName[0].ToString());
+            var btnDistination = GridGraph.Children.OfType<Button>().Single(b => b.Name == lineName[1].ToString());
+            if (_linesRegisteredName.Contains(lineName))
+            {
+                line.Stroke = Brushes.Black;
+                line.UnregisterName($"GradientStop1{line.Name}");
+                line.UnregisterName($"GradientStop2{line.Name}");
+            }
+            else
+                _linesRegisteredName.Add(line.Name);
+            LinearGradientBrush gradientBrush = new LinearGradientBrush();
+            gradientBrush.StartPoint = new Point(btnStart.Margin.Right, btnStart.Margin.Bottom);
+            gradientBrush.EndPoint = new Point(btnDistination.Margin.Right, btnDistination.Margin.Bottom);
+            GradientStop stop1 = new GradientStop(Colors.Red, 0.0);
+            GradientStop stop2 = new GradientStop(Colors.Black, 0.0);
+            line.RegisterName($"GradientStop1{line.Name}", stop1);
+            line.RegisterName($"GradientStop2{line.Name}", stop2);
+            //Extensions.IsPassed(line, true);
+            gradientBrush.GradientStops.Add(stop1);
+            gradientBrush.GradientStops.Add(stop2);
+            line.Stroke = gradientBrush;
+            var offsetAnimation = new DoubleAnimation
+            {
+                From = 0.0,
+                To = 15,
+                Duration = TimeSpan.FromSeconds(4),
+            };
+            offsetAnimation.Completed += DfsAnimateLineColoring_Completed;
+            Storyboard.SetTargetName(offsetAnimation, $"GradientStop2{line.Name}");
+            Storyboard.SetTargetProperty(offsetAnimation,
+                new PropertyPath(GradientStop.OffsetProperty));
+            var gradientStopAnimationStoryboard = new Storyboard();
+            gradientStopAnimationStoryboard.Children.Add(offsetAnimation);
+            gradientStopAnimationStoryboard.Begin(line);
+
+        }
+        private void DfsColorAnimationButton_Completed(object sender, EventArgs eventArgs, string lineName)
+        {
+            DfsColorTheLine(lineName);
+        }
+        private void DfsAnimateLineColoring_Completed(object sender, EventArgs e)
+        {
+            if (DfsLevelIndex >= DfsQueue.Count - 1)
+                return;
+            DfsLevelIndex++;
+            DfsColorTheButton();
+        }
+        private void SaveDfsToList(Vertex<string> vertex, Vertex<string> prevVertex)
+        {
+            DfsQueue.Add(prevVertex.Name + vertex.Name);
+            vertex.IsVisited = true;
+            foreach (var neighber in vertex.Neighbors.Where(n => n.IsVisited == false))
+            {
+                SaveDfsToList(neighber, vertex);
+            }
+        }
+        private void MenuItemSimulateBFS_Click(object sender, RoutedEventArgs e)
+        {
+            BfsLevelIndex = 0;
+            foreach (var child in GridGraph.Children)
+            {
+                switch (child)
+                {
+                    case Button button:
+                        button.Background = Brushes.Black;
+                        break;
+                    case Line line:
+                        line.Stroke = Brushes.Black;
+                        break;
+                }
+                Extensions.IsPassed(child as UIElement, false);
+            }
+            var btnStartVertex = ((sender as MenuItem).Parent as ContextMenu)
+                    .PlacementTarget as Button;
+            BfsLevelArray = _graph
+                .GetVerticesCountOfEachLevel(_graph.Vertices
+                    .Single(v => v.Name == btnStartVertex.Name));
+            ChangeButtonBackGroundAnimatial(btnStartVertex);
+        }
+        private void ChangeButtonBackGroundAnimatial(Button button)
+        {
+            if (Extensions.IsPassed(button))
+                return;
+            var colorAnimationButton = new ColorAnimation
+            {
+                From = Colors.Black,
+                To = Colors.Red,
+                Duration = TimeSpan.FromSeconds(1)
+            };
+            colorAnimationButton.Completed += (sender, e) => BfsColorAnimationButton_Completed(sender, e, button);
+            button.Background = new SolidColorBrush(Colors.Black);
+            button.Background
+                .BeginAnimation(SolidColorBrush.ColorProperty, colorAnimationButton);
+            BfsLevelArray[BfsLevelIndex]--;
+            GridGraph.Children.OfType<Label>().Single(l => l.Name == button.Name).Content = BfsLevelIndex + 1;
+            if (BfsLevelArray[BfsLevelIndex] == 0)
+                BfsLevelIndex++;
+            //if (BtnRemaindedToIndex == -1)
+            //{
+            //    GridGraph.Children.OfType<Label>().Single(l => l.Name == button.Name).Content = ++BfsCounter;
+            //    BfsCounter++;
+            //}
+            //else if (BtnRemaindedToIndex > 0)
+            //{
+            //    GridGraph.Children.OfType<Label>().Single(l => l.Name == button.Name).Content = BfsCounter;
+            //    BtnRemaindedToIndex--;
+            //    if(BtnRemaindedToIndex==0)
+            //        BfsCounter++;
+            //}
+            Extensions.IsPassed(button, true);
+        }
+        private void ChangeLinesBackGroundAnimatial(Button buttonRoot)
+        {
+            var linesShouldEffect = GridGraph.Children.OfType<Line>().Where(l => l.Name.Contains(buttonRoot.Name));
+            foreach (var line in linesShouldEffect)
+            {
+                if (Extensions.IsPassed(line))
+                    continue;
+                var distinationVertexName = line.Name.Replace(buttonRoot.Name, string.Empty);
+                var btndistinationVertex =
+                    GridGraph.Children.OfType<Button>()
+                        .Single(b => b.Name == distinationVertexName);
+                if (Extensions.IsPassed(btndistinationVertex))
+                    continue;
+                if (_linesRegisteredName.Contains(line.Name))
+                {
+                    line.Stroke = Brushes.Black;
+                    line.UnregisterName($"GradientStop1{line.Name}");
+                    line.UnregisterName($"GradientStop2{line.Name}");
+                }
+                else
+                    _linesRegisteredName.Add(line.Name);
+                LinearGradientBrush gradientBrush = new LinearGradientBrush();
+                gradientBrush.StartPoint = new Point(buttonRoot.Margin.Right, buttonRoot.Margin.Bottom);
+                gradientBrush.EndPoint = new Point(btndistinationVertex.Margin.Right, btndistinationVertex.Margin.Bottom);
+                GradientStop stop1 = new GradientStop(Colors.Red, 0.0);
+                GradientStop stop2 = new GradientStop(Colors.Black, 0.0);
+                line.RegisterName($"GradientStop1{line.Name}", stop1);
+                line.RegisterName($"GradientStop2{line.Name}", stop2);
+                Extensions.IsPassed(line, true);
+                gradientBrush.GradientStops.Add(stop1);
+                gradientBrush.GradientStops.Add(stop2);
+                line.Stroke = gradientBrush;
+                var offsetAnimation = new DoubleAnimation
+                {
+                    From = 0.0,
+                    To = 15,
+                    Duration = TimeSpan.FromSeconds(4),
+                };
+                offsetAnimation.Completed += (sender, e) => OffsetAnimation_Completed(sender, e, btndistinationVertex); ;
+                Storyboard.SetTargetName(offsetAnimation, $"GradientStop2{line.Name}");
+                Storyboard.SetTargetProperty(offsetAnimation,
+                    new PropertyPath(GradientStop.OffsetProperty));
+                var gradientStopAnimationStoryboard = new Storyboard();
+                gradientStopAnimationStoryboard.Children.Add(offsetAnimation);
+                gradientStopAnimationStoryboard.Begin(line);
+            }
+        }
+        private void BfsColorAnimationButton_Completed(object sender, EventArgs e, Button buttonSender)
+        {
+            ChangeLinesBackGroundAnimatial(buttonSender);
+        }
+        private void OffsetAnimation_Completed(object sender, EventArgs e, Button buttonDistanation)
+        {
+            ChangeButtonBackGroundAnimatial(buttonDistanation);
         }
         //private void MenuItemGreedyColoring_Click(object sender, RoutedEventArgs e)
         //{
         //    var btnStartNode = ((sender as MenuItem).Parent as ContextMenu)
         //        .PlacementTarget as Button;
-        //    _graph.GreedyColoring(_graph.Vertices.Single(v => v.Name == btnStartNode.Name), GraidGraph);
+        //    _graph.GreedyColoring(_graph.Vertices.Single(v => v.Name == btnStartNode.Name), GridGraph);
         //}
         private void Vertex_Click(object sender, RoutedEventArgs e)
         {
             var currentButton = (Button)sender;
             if (IsOnGreedyColoringState)
             {
-                if (Extensions.GetVertexState(currentButton) != (int)VertexState.ReadyForGreedyColoring) return;
-                var normalEffect = new DropShadowBitmapEffect
-                {
-                    Direction = 0,
-                    ShadowDepth = 0,
-                    Softness = 0,
-                    Opacity = 0
-                };
+                if (Extensions.VertexState(currentButton) != (int)VertexState.ReadyForGreedyColoring) return;
                 currentButton.BitmapEffect = null;
-                Extensions.SetVertexState(currentButton, (int)VertexState.Normal);
-                GraidGraph.Children.OfType<Label>()
+                currentButton.BorderBrush = Brushes.Black;
+                Extensions.VertexState(currentButton, (int)VertexState.Normal);
+                GridGraph.Children.OfType<Label>()
                         .Single(l => l.Name == currentButton.Name).Content =
                     _queuebButtons.Count + 1;
                 _queuebButtons.Enqueue(_graph.Vertices.Single(v => v.Name == currentButton.Name));
-                if (GraidGraph.Children.OfType<Button>()
-                    .All(b => Extensions.GetVertexState(b) !=
+                if (GridGraph.Children.OfType<Button>()
+                    .All(b => Extensions.VertexState(b) !=
                               (int)VertexState.ReadyForGreedyColoring))
                 {
                     IsOnGreedyColoringState = false;
-                    _graph.GreedyColoring(_queuebButtons, GraidGraph);
+                    GridGreedyColoringInfo.Visibility = Visibility.Hidden;
+                    _graph.GreedyColoring(_queuebButtons, GridGraph);
                     _queuebButtons.Clear();
                 }
             }
@@ -154,38 +438,47 @@ namespace AGraph
                     {
                         MessageBox.Show("Just simple graph allowed.");
                         IsVertexSelected = false;
-                        currentButton.Background = Brushes.Black;
+                        currentButton.BorderBrush = Brushes.Black;
+                        currentButton.BitmapEffect = null;
                         return;
                     }
-                    //draw a line in visual graph
+                    //Add edge to graph
+                    var firstVertex = _graph.Vertices
+                        .Single(g => g.Name == PrevButton.Name);
+                    var secendVertex = _graph.Vertices
+                        .Single(g => g.Name == currentButton.Name);
+                    if (_graph.AddPair(firstVertex, secendVertex))
                     {
-                        var l = new Line
+                        //draw a line in visual graph
+                        var line = new Line
                         {
                             Stroke = new SolidColorBrush(Colors.Black),
                             StrokeThickness = 2.0,
-                            Name = "line",
+                            Name = $"{PrevButton.Name[0]}{currentButton.Name[0]}",
                             X1 = PrevVertex.X,
                             X2 = currentPoint.X + currentButton.ActualWidth / 2,
                             Y1 = PrevVertex.Y,
                             Y2 = currentPoint.Y + currentButton.ActualHeight / 2
                         };
-                        Panel.SetZIndex(l, -10);
-                        GraidGraph.Children.Add(l);
+                        Panel.SetZIndex(line, -10);
+                        GridGraph.Children.Add(line);
                     }
-                    //Add edge to graph
-                    {
-                        var firstVertex = _graph.Vertices
-                            .Single(g => g.Name == PrevButton.Name);
-                        var secendVertex = _graph.Vertices
-                         .Single(g => g.Name == currentButton.Name);
-                        _graph.AddPair(firstVertex, secendVertex);
-                    }
-                    PrevButton.Background = Brushes.Black;
+                    PrevButton.BitmapEffect = null;
+                    PrevButton.BorderBrush = Brushes.Black;
                     IsVertexSelected = false;
                 }
                 else
                 {
-                    currentButton.Background = Brushes.Aqua;
+                    var selectedVertexEffect = new DropShadowBitmapEffect
+                    {
+                        Color = Colors.Aqua,
+                        Direction = 320,
+                        ShadowDepth = 0,
+                        Softness = 1,
+                        Opacity = 1
+                    };
+                    currentButton.BitmapEffect = selectedVertexEffect;
+                    currentButton.BorderBrush = Brushes.Aqua;
                     PrevButton = currentButton;
                     PrevVertex = new Vector(
                         currentPoint.X + currentButton.ActualWidth / 2,
@@ -226,12 +519,30 @@ namespace AGraph
         private void BtnStartOptimalColoring_OnClick(object sender, RoutedEventArgs e)
         {
             ResetColoringAndLabels();
-            _graph.OptimalColoring(GraidGraph);
+            GridGreedyColoringInfo.Visibility = Visibility.Hidden;
+            _graph.OptimalColoring(GridGraph);
         }
+        private readonly DispatcherTimer UiDis = new DispatcherTimer();
         private void BtnStartGreedyColoring_OnClick(object sender, RoutedEventArgs e)
         {
             ResetColoringAndLabels();
+            //_glowingButtons = GridGraph.Children.OfType<Button>().ToList();
+            //UiDis.Interval = TimeSpan.FromMilliseconds(10);
+            //UiDis.Stop();
+            //UiDis.Start();
             GlowVertices(!IsOnGreedyColoringState);
+        }
+        private void BtnStartGreedyAlgorithm_Click(object sender, RoutedEventArgs e)
+        {
+            _graph.GreedyColoring(_queuebButtons, GridGraph);
+            _queuebButtons.Clear();
+            IsOnGreedyColoringState = false;
+            GridGreedyColoringInfo.Visibility = Visibility.Hidden;
+            foreach (var buttonGlowing in GridGraph.Children.OfType<Button>().Where(b => b.BorderBrush != Brushes.Black))
+            {
+                buttonGlowing.BorderBrush = Brushes.Black;
+                buttonGlowing.BitmapEffect = null;
+            }
         }
         private void GlowVertices(bool light)
         {
@@ -245,50 +556,73 @@ namespace AGraph
                     Softness = 1,
                     Opacity = 1
                 };
-                foreach (var btnVertex in GraidGraph.Children.OfType<Button>())
+                foreach (var btnVertex in GridGraph.Children.OfType<Button>())
                 {
                     btnVertex.BitmapEffect = readyToSelectEffect;
-                    Extensions.SetVertexState(btnVertex, (int)VertexState.ReadyForGreedyColoring);
+                    btnVertex.BorderBrush = new SolidColorBrush(Color.FromRgb(155, 144, 239));
+                    Extensions.VertexState(btnVertex, (int)VertexState.ReadyForGreedyColoring);
                 }
                 IsOnGreedyColoringState = true;
+                GridGreedyColoringInfo.Visibility = Visibility.Visible;
             }
             else
             {
-                foreach (var btnVertex in GraidGraph.Children.OfType<Button>())
+                foreach (var btnVertex in GridGraph.Children.OfType<Button>())
                 {
                     btnVertex.BitmapEffect = null;
-                    Extensions.SetVertexState(btnVertex, (int)VertexState.Normal);
+                    Extensions.VertexState(btnVertex, (int)VertexState.Normal);
                 }
+                GridGreedyColoringInfo.Visibility = Visibility.Hidden;
                 IsOnGreedyColoringState = false;
+                _queuebButtons.Clear();
             }
         }
-        //private void GlowVertices(object sender, EventArgs e)
+        //private double opa;
+        //private bool rising = true;
+        //private void GlowingVertices(object sender, EventArgs e)
         //{
+        //    if (rising)
+        //    {
+        //        if (opa >= 1)
+        //            rising = false;
+        //        opa += .05;
+        //    }
+        //    else
+        //    {
+        //        if (opa <= 0)
+        //            rising = true;
+        //        opa -= .05;
+        //    }
         //    var readyToSelectEffect = new DropShadowBitmapEffect
         //    {
         //        Color = Colors.Blue,
         //        Direction = 320,
         //        ShadowDepth = 0,
         //        Softness = 1,
-        //        Opacity = 1
+        //        Opacity = opa
         //    };
-        //    foreach (var btnVertex in GraidGraph.Children.OfType<Button>())
+        //    foreach (var btnVertex in _glowingButtons)
         //    {
         //        btnVertex.BitmapEffect = readyToSelectEffect;
-        //        Extensions.SetVertexState(btnVertex, (int)VertexState.ReadyForGreedyColoring);
         //    }
         //    IsOnGreedyColoringState = true;
         //}
         private void ResetColoringAndLabels()
         {
-            foreach (var buttonVertex in GraidGraph.Children.OfType<Button>())
+            foreach (var buttonVertex in GridGraph.Children.OfType<Button>())
             {
-                buttonVertex.Background = new SolidColorBrush(Colors.Black);
+                buttonVertex.Background = Brushes.Black;
             }
-            foreach (var labelVertex in GraidGraph.Children.OfType<Label>())
+            foreach (var labelVertex in GridGraph.Children.OfType<Label>())
             {
                 labelVertex.Content = string.Empty;
             }
+            foreach (var buttonSelected in GridGraph.Children.OfType<Button>().Where(b => b.BorderBrush != Brushes.Black))
+            {
+                buttonSelected.BorderBrush = Brushes.Black;
+                buttonSelected.BitmapEffect = null;
+            }
+            IsVertexSelected = false;
         }
         #region Line From One POint To Mouse Position
         //private void Canvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -385,5 +719,22 @@ namespace AGraph
         //    return value;
         //}
         #endregion
+        private void BtnIsGrapfBipartite_OnClick(object sender, RoutedEventArgs e)
+        {
+            MessageBox.Show(_graph.IsGraph2Colorable().ToString());
+        }
+
+        private void BtnBuildAdjacencyMatrix_OnClick(object sender, RoutedEventArgs e)
+        {
+            BuildAdjacencyMatrix();
+            ExecuteFloyedWarshall();
+            for (int i = 0; i < _graph.Vertices.Count - 1; i++)
+            {
+                for (int j = 0; j < _graph.Vertices.Count - 1; j++)
+                {
+                    Console.WriteLine($"{(char)(i + 65)} to {(char)(j + 66)} {_adjacencyMatrix[i, j]}");
+                }
+            }
+        }
     }
 }

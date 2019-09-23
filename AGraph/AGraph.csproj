@@ -58,6 +58,7 @@
     <Compile Include="Extensions.cs" />
     <Compile Include="UndirectedGenericGraph.cs" />
     <Compile Include="Vertex.cs" />
+    <Compile Include="VisibilityAnimation.cs" />
     <Page Include="MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
